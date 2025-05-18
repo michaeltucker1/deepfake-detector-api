@@ -11,7 +11,7 @@ BASE_DIR    = Path(__file__).parent
 MODELS_ROOT = BASE_DIR / "models"          
 ALLOWED_IDS = {"v1", "v2"}                 
 DEFAULT_ID  = "v1"
-THRESHOLD   = 0.5
+THRESHOLD   = 0.6
 
 app = Flask(__name__)
 CORS(app)
