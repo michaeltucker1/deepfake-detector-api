@@ -16,8 +16,12 @@ THRESHOLD   = 0.5
 app = Flask(__name__)
 CORS(app)
 
+MODEL_SIZE_OVERRIDES = {       
+    "v1": (256, 256),
+    "v2": (224, 224),
+}
+
 def _model_path(model_id: str) -> Path:
-    """Return SavedModel dir or .h5 file for a given model id."""
     saved_dir = MODELS_ROOT / f"saved_model_{model_id}"
     if saved_dir.is_dir():
         return saved_dir
@@ -26,21 +30,43 @@ def _model_path(model_id: str) -> Path:
         return h5_file
     raise FileNotFoundError(f"No model files found for id '{model_id}'")
 
+def _discover_hw(m: tf.keras.Model) -> tuple[int | None, int | None]:
+    """
+    Try to find a concrete (H,W) inside the model graph.
+    Returns (None, None) if nothing conclusive is found.
+    """
+    # 1) Preferred: model.inputs
+    if m.inputs:
+        shp = m.inputs[0].shape
+        if shp[1] and shp[2]:
+            return int(shp[1]), int(shp[2])
+
+    # 2) Walk layers
+    for layer in m.layers:
+        if hasattr(layer, "input_shape") and layer.input_shape is not None:
+            shp = layer.input_shape
+            if isinstance(shp, (list, tuple)):
+                shp = shp[0]            # handle nested lists
+            if shp is not None and len(shp) >= 3 and shp[1] and shp[2]:
+                return int(shp[1]), int(shp[2])
+    return None, None  # no luck
+
 @lru_cache(maxsize=4)
 def load_model_and_size(model_id: str):
-    """
-    Load model once and memoise.  
-    Returns (model, (height, width)).
-    """
+    """Load model once and memoise. Returns (model, (H,W))."""
     m = tf.keras.models.load_model(_model_path(model_id))
 
-    # Keras models can have multiple inputs; handle list/tuple
-    first_shape = m.input_shape[0] if isinstance(m.input_shape, (list, tuple)) else m.input_shape
-    # first_shape: (None, H, W, C)  for channels-last
-    h, w = int(first_shape[1]), int(first_shape[2])
+    h, w = _discover_hw(m)
 
-    if not h or not w:
-        raise ValueError(f"Could not determine input size for model '{model_id}' (shape={first_shape})")
+    # Fall back to overrides
+    if (h is None or w is None) and model_id in MODEL_SIZE_OVERRIDES:
+        h, w = MODEL_SIZE_OVERRIDES[model_id]
+
+    if h is None or w is None:
+        raise ValueError(
+            f"Could not determine input size for model '{model_id}'. "
+            "Add it to MODEL_SIZE_OVERRIDES."
+        )
 
     return m, (h, w)
 
